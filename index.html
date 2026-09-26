@@ -1,0 +1,379 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Réservation des Terrains — EMI</title>
+<style>
+:root{
+  --bg:#f5f6f8; --card:#ffffff; --text:#1a1d23; --sub:#6b7280;
+  --border:#e2e4e9; --accent:#2563eb; --accent-text:#fff;
+  --free:#eef2ff; --free-hover:#e0e7ff; --taken:#dcfce7; --taken-text:#166534;
+  --danger:#dc2626;
+  padding-top:env(safe-area-inset-top,0px); padding-bottom:env(safe-area-inset-bottom,0px);
+  box-sizing:border-box;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#14161a; --card:#1e2127; --text:#e5e7eb; --sub:#9ca3af;
+    --border:#2c2f36; --accent:#3b82f6; --accent-text:#fff;
+    --free:#1e2540; --free-hover:#28305a; --taken:#123023; --taken-text:#4ade80;
+  }
+}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,Segoe UI,Roboto,sans-serif}
+.wrap{max-width:900px;margin:0 auto;padding:16px 14px 40px}
+h1{font-size:1.25rem;margin:6px 0 2px}
+.sub{color:var(--sub);font-size:.85rem;margin-bottom:16px;line-height:1.45}
+.card{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:14px;margin-bottom:14px}
+.notice{font-size:.82rem;color:var(--sub);margin-top:10px;line-height:1.45}
+.notice strong{color:var(--text)}
+label{font-size:.8rem;color:var(--sub);display:block;margin-bottom:4px}
+input[type=date]{width:100%;padding:10px;border-radius:10px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:1rem}
+.daynav{display:flex;gap:8px;margin-top:10px}
+.daynav button{flex:1;padding:8px;border-radius:10px;border:1px solid var(--border);background:var(--bg);color:var(--text);cursor:pointer;font-size:.85rem}
+.grid-wrap{overflow-x:auto;border-radius:14px;border:1px solid var(--border)}
+table{border-collapse:collapse;width:100%;min-width:580px;background:var(--card)}
+th,td{padding:6px;text-align:center;font-size:.78rem;border-bottom:1px solid var(--border)}
+th{background:var(--bg);color:var(--sub);font-weight:600;position:sticky;top:0}
+td.hour{color:var(--sub);white-space:nowrap;font-weight:600}
+.slot{border-radius:9px;padding:8px 4px;cursor:pointer;user-select:none;min-height:54px;display:flex;flex-direction:column;justify-content:center;gap:3px}
+.slot.free{background:var(--free)}
+.slot.free:hover{background:var(--free-hover)}
+.slot.taken{background:var(--taken);color:var(--taken-text);font-weight:600;cursor:default}
+.slot small{font-weight:400;opacity:.9;font-size:.69rem}
+.actions{display:flex;justify-content:center;margin-top:4px}
+.actions button{border:none;border-radius:7px;padding:4px 8px;font-size:.67rem;cursor:pointer;color:#fff;background:var(--danger)}
+.legend{display:flex;gap:14px;flex-wrap:wrap;font-size:.75rem;color:var(--sub);margin-top:10px}
+.dot{width:10px;height:10px;border-radius:3px;display:inline-block;margin-right:5px;vertical-align:middle}
+.outofrange{color:var(--danger);font-size:.85rem;margin-top:8px}
+.status{font-size:.8rem;color:var(--sub);margin-top:10px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>🏟️ Réservation des Terrains — EMI</h1>
+  <div class="sub">
+    Mini-foot • Basketball • Volleyball — créneaux de 8h à 22h, année scolaire 2026–2027
+  </div>
+
+  <div class="card">
+    <label for="datePick">Choisir une date</label>
+    <input type="date" id="datePick" min="2026-09-01" max="2027-06-30">
+    <div class="daynav">
+      <button id="prevDay">← Veille</button>
+      <button id="today">Aujourd'hui</button>
+      <button id="nextDay">Lendemain →</button>
+    </div>
+    <div class="notice">
+      <strong>Règle :</strong> chaque génie peut effectuer <strong>une seule réservation par jour</strong>.
+      La réservation affiche le génie et le nom de son représentant. Seul l'administrateur peut supprimer une réservation.
+    </div>
+    <div id="outOfRange" class="outofrange"></div>
+    <div id="status" class="status"></div>
+  </div>
+
+  <div class="grid-wrap">
+    <table id="grid">
+      <thead><tr><th>Heure</th><th>Mini-foot</th><th>Basketball</th><th>Volleyball</th></tr></thead>
+      <tbody id="gridBody"></tbody>
+    </table>
+  </div>
+
+  <div class="legend">
+    <span><span class="dot" style="background:var(--free)"></span>Libre</span>
+    <span><span class="dot" style="background:var(--taken)"></span>Réservé</span>
+  </div>
+</div>
+
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+import {
+  getFirestore, collection, doc, onSnapshot, runTransaction
+} from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+import {
+  getAuth, signInWithEmailAndPassword, signOut
+} from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
+
+// ============================================================
+// 1) COLLE ICI LA CONFIGURATION WEB DE TON PROPRE PROJET FIREBASE
+// ============================================================
+const firebaseConfig = {
+  apiKey: "YOUR_API_KEY",
+  authDomain: "YOUR_PROJECT.firebaseapp.com",
+  projectId: "YOUR_PROJECT_ID",
+  storageBucket: "YOUR_PROJECT.firebasestorage.app",
+  messagingSenderId: "YOUR_MESSAGING_SENDER_ID",
+  appId: "YOUR_APP_ID"
+};
+
+// Ce compte est créé UNE SEULE FOIS dans Firebase Authentication.
+// L'adresse n'a pas besoin de recevoir des emails. Le mot de passe, lui, reste secret.
+const ADMIN_EMAIL = "admin.reservation@emi.local";
+
+const app = initializeApp(firebaseConfig);
+const db = getFirestore(app);
+const auth = getAuth(app);
+const resCol = collection(db, "reservations");
+
+const COURTS = ["minifoot", "basket", "volley"];
+const COURT_LABELS = {
+  minifoot: "Mini-foot",
+  basket: "Basketball",
+  volley: "Volleyball"
+};
+
+// Filières EMI 2026–2027
+const GENIES = [
+  { code:"GC",   name:"Génie Civil" },
+  { code:"GE",   name:"Génie Électrique" },
+  { code:"GRT",  name:"Génie Réseaux et Télécommunications" },
+  { code:"GI",   name:"Génie Industriel" },
+  { code:"GINF", name:"Génie Informatique" },
+  { code:"GM",   name:"Génie Mécanique" },
+  { code:"GMIN", name:"Génie Minéral" },
+  { code:"MIS",  name:"Génie Modélisation et Informatique Scientifique" },
+  { code:"GPI",  name:"Génie des Procédés Industriels" }
+];
+
+const START_HOUR = 8;
+const END_HOUR = 22;
+const MIN_DATE = "2026-09-01";
+const MAX_DATE = "2027-06-30";
+
+let data = {};
+const statusEl = document.getElementById("status");
+
+onSnapshot(resCol, (snap) => {
+  data = {};
+  snap.forEach((d) => {
+    const value = d.data();
+    if (value.type === "reservation") data[d.id] = value;
+  });
+  statusEl.textContent = "Synchronisé";
+  render();
+}, (err) => {
+  console.error("Firestore error", err);
+  statusEl.textContent = "Erreur de synchronisation Firebase.";
+});
+
+function slotKey(date, court, hour) {
+  return `${date}__${court}__${hour}`;
+}
+
+function lockKey(date, genie) {
+  return `lock__${date}__${genie}`;
+}
+
+async function reserve(date, court, hour, genie, representative) {
+  const sKey = slotKey(date, court, hour);
+  const lKey = lockKey(date, genie);
+  const slotRef = doc(db, "reservations", sKey);
+  const lockRef = doc(db, "reservations", lKey);
+
+  await runTransaction(db, async (tx) => {
+    const slotSnap = await tx.get(slotRef);
+    const lockSnap = await tx.get(lockRef);
+
+    if (slotSnap.exists()) {
+      throw new Error("SLOT_TAKEN");
+    }
+    if (lockSnap.exists()) {
+      throw new Error("GENIE_ALREADY_BOOKED");
+    }
+
+    const createdAt = Date.now();
+
+    tx.set(slotRef, {
+      type: "reservation",
+      date,
+      court,
+      hour,
+      genie,
+      representative,
+      slotKey: sKey,
+      lockKey: lKey,
+      createdAt
+    });
+
+    tx.set(lockRef, {
+      type: "lock",
+      date,
+      genie,
+      slotKey: sKey,
+      lockKey: lKey,
+      createdAt
+    });
+  });
+}
+
+async function deleteAsAdmin(sKey) {
+  const reservation = data[sKey];
+  if (!reservation) return;
+
+  const password = prompt("Mot de passe administrateur :");
+  if (!password) return;
+
+  try {
+    statusEl.textContent = "Vérification administrateur…";
+    await signInWithEmailAndPassword(auth, ADMIN_EMAIL, password);
+
+    const slotRef = doc(db, "reservations", sKey);
+    const lKey = reservation.lockKey || lockKey(reservation.date, reservation.genie);
+    const lockRef = doc(db, "reservations", lKey);
+
+    await runTransaction(db, async (tx) => {
+      const current = await tx.get(slotRef);
+      if (!current.exists()) return;
+      tx.delete(slotRef);
+      tx.delete(lockRef);
+    });
+
+    alert("Réservation supprimée.");
+  } catch (err) {
+    console.error(err);
+    alert("Mot de passe incorrect ou suppression refusée.");
+  } finally {
+    try { await signOut(auth); } catch (_) {}
+    statusEl.textContent = "Synchronisé";
+  }
+}
+
+function getGenie(code) {
+  const normalized = String(code || "").trim().toUpperCase();
+  return GENIES.find(g => g.code === normalized);
+}
+
+function geniePromptText() {
+  return "Choisissez le génie en écrivant son code :\n\n" +
+    GENIES.map(g => `${g.code} — ${g.name}`).join("\n");
+}
+
+async function startReservation(date, court, hour) {
+  let entered = prompt(geniePromptText());
+  if (entered === null) return;
+
+  const genie = getGenie(entered);
+  if (!genie) {
+    alert("Code de génie invalide.");
+    return;
+  }
+
+  const representative = prompt(
+    `Nom du représentant de ${genie.name} pour ${COURT_LABELS[court]}, ${hour}h–${hour + 1}h :`
+  );
+  if (!representative || !representative.trim()) return;
+
+  const cleanName = representative.trim().replace(/\s+/g, " ").slice(0, 80);
+
+  try {
+    statusEl.textContent = "Enregistrement…";
+    await reserve(date, court, hour, genie.code, cleanName);
+    alert("Réservation enregistrée.");
+  } catch (err) {
+    console.error(err);
+    if (String(err.message).includes("GENIE_ALREADY_BOOKED")) {
+      alert(`${genie.name} possède déjà une réservation pour cette date.`);
+    } else if (String(err.message).includes("SLOT_TAKEN")) {
+      alert("Ce créneau vient d'être réservé par quelqu'un d'autre.");
+    } else {
+      alert("Impossible d'enregistrer la réservation. Vérifiez la configuration Firebase.");
+    }
+  } finally {
+    statusEl.textContent = "Synchronisé";
+  }
+}
+
+const dateInput = document.getElementById("datePick");
+const today = new Date();
+const todayStr = today.toISOString().slice(0, 10);
+dateInput.value = todayStr < MIN_DATE ? MIN_DATE : (todayStr > MAX_DATE ? MAX_DATE : todayStr);
+
+function render() {
+  const date = dateInput.value;
+  const outOfRange = document.getElementById("outOfRange");
+  const inRange = date >= MIN_DATE && date <= MAX_DATE;
+  outOfRange.textContent = inRange ? "" : "Cette date est en dehors de l'année scolaire (01/09/2026 – 30/06/2027).";
+
+  const body = document.getElementById("gridBody");
+  body.innerHTML = "";
+
+  for (let h = START_HOUR; h < END_HOUR; h++) {
+    const tr = document.createElement("tr");
+
+    const tdHour = document.createElement("td");
+    tdHour.className = "hour";
+    tdHour.textContent = `${h}h–${h + 1}h`;
+    tr.appendChild(tdHour);
+
+    COURTS.forEach((court) => {
+      const td = document.createElement("td");
+      const sKey = slotKey(date, court, h);
+      const reservation = data[sKey];
+      const div = document.createElement("div");
+      div.className = "slot " + (reservation ? "taken" : "free");
+
+      if (reservation) {
+        const genie = GENIES.find(g => g.code === reservation.genie);
+        const genieLabel = genie ? `${genie.code} — ${genie.name}` : reservation.genie;
+
+        const title = document.createElement("div");
+        title.textContent = genieLabel;
+
+        const rep = document.createElement("small");
+        rep.textContent = `Représentant : ${reservation.representative}`;
+
+        const actions = document.createElement("div");
+        actions.className = "actions";
+
+        const del = document.createElement("button");
+        del.textContent = "Supprimer (admin)";
+        del.onclick = (e) => {
+          e.stopPropagation();
+          deleteAsAdmin(sKey);
+        };
+
+        actions.appendChild(del);
+        div.appendChild(title);
+        div.appendChild(rep);
+        div.appendChild(actions);
+      } else {
+        div.textContent = "Libre";
+        div.onclick = () => {
+          if (!inRange) return;
+          startReservation(date, court, h);
+        };
+      }
+
+      td.appendChild(div);
+      tr.appendChild(td);
+    });
+
+    body.appendChild(tr);
+  }
+}
+
+dateInput.addEventListener("change", render);
+document.getElementById("prevDay").onclick = () => {
+  dateInput.value = shiftDate(dateInput.value, -1);
+  render();
+};
+document.getElementById("nextDay").onclick = () => {
+  dateInput.value = shiftDate(dateInput.value, 1);
+  render();
+};
+document.getElementById("today").onclick = () => {
+  dateInput.value = new Date().toISOString().slice(0, 10);
+  render();
+};
+
+function shiftDate(str, delta) {
+  const d = new Date(str + "T00:00:00");
+  d.setDate(d.getDate() + delta);
+  return d.toISOString().slice(0, 10);
+}
+
+render();
+</script>
+</body>
+</html>
