@@ -66,8 +66,8 @@ td.hour{color:var(--sub);white-space:nowrap;font-weight:600}
       <button id="nextDay">Lendemain →</button>
     </div>
     <div class="notice">
-      <strong>Règle :</strong> chaque génie peut effectuer <strong>une seule réservation par jour</strong>.
-      La réservation affiche le génie et le nom de son représentant. Seul l'administrateur peut supprimer une réservation.
+      <strong>Règle :</strong> chaque promotion de chaque génie peut effectuer <strong>une seule réservation par jour</strong>.
+      Exemple : GPI 1A peut réserver sans bloquer GPI 2A ni GPI 3A. La réservation affiche le génie, la promotion et le nom du représentant. Seul l'administrateur peut supprimer une réservation.
     </div>
     <div id="outOfRange" class="outofrange"></div>
     <div id="status" class="status"></div>
@@ -136,6 +136,12 @@ const GENIES = [
   { code:"GPI",  name:"Génie des Procédés Industriels" }
 ];
 
+const PROMOTIONS = [
+  { code:"1A", name:"1ère année" },
+  { code:"2A", name:"2ème année" },
+  { code:"3A", name:"3ème année" }
+];
+
 const START_HOUR = 8;
 const END_HOUR = 22;
 const MIN_DATE = "2026-09-01";
@@ -161,13 +167,13 @@ function slotKey(date, court, hour) {
   return `${date}__${court}__${hour}`;
 }
 
-function lockKey(date, genie) {
-  return `lock__${date}__${genie}`;
+function lockKey(date, genie, promotion) {
+  return `lock__${date}__${genie}__${promotion}`;
 }
 
-async function reserve(date, court, hour, genie, representative) {
+async function reserve(date, court, hour, genie, promotion, representative) {
   const sKey = slotKey(date, court, hour);
-  const lKey = lockKey(date, genie);
+  const lKey = lockKey(date, genie, promotion);
   const slotRef = doc(db, "reservations", sKey);
   const lockRef = doc(db, "reservations", lKey);
 
@@ -179,7 +185,7 @@ async function reserve(date, court, hour, genie, representative) {
       throw new Error("SLOT_TAKEN");
     }
     if (lockSnap.exists()) {
-      throw new Error("GENIE_ALREADY_BOOKED");
+      throw new Error("PROMOTION_ALREADY_BOOKED");
     }
 
     const createdAt = Date.now();
@@ -190,6 +196,7 @@ async function reserve(date, court, hour, genie, representative) {
       court,
       hour,
       genie,
+      promotion,
       representative,
       slotKey: sKey,
       lockKey: lKey,
@@ -200,6 +207,7 @@ async function reserve(date, court, hour, genie, representative) {
       type: "lock",
       date,
       genie,
+      promotion,
       slotKey: sKey,
       lockKey: lKey,
       createdAt
@@ -219,7 +227,7 @@ async function deleteAsAdmin(sKey) {
     await signInWithEmailAndPassword(auth, ADMIN_EMAIL, password);
 
     const slotRef = doc(db, "reservations", sKey);
-    const lKey = reservation.lockKey || lockKey(reservation.date, reservation.genie);
+    const lKey = reservation.lockKey || lockKey(reservation.date, reservation.genie, reservation.promotion);
     const lockRef = doc(db, "reservations", lKey);
 
     await runTransaction(db, async (tx) => {
@@ -249,6 +257,21 @@ function geniePromptText() {
     GENIES.map(g => `${g.code} — ${g.name}`).join("\n");
 }
 
+function getPromotion(value) {
+  const normalized = String(value || "").trim().toUpperCase().replace(/\s+/g, "");
+  const aliases = {
+    "1":"1A", "1A":"1A", "1ERE":"1A", "1ÈRE":"1A",
+    "2":"2A", "2A":"2A", "2EME":"2A", "2ÈME":"2A",
+    "3":"3A", "3A":"3A", "3EME":"3A", "3ÈME":"3A"
+  };
+  const code = aliases[normalized];
+  return PROMOTIONS.find(p => p.code === code);
+}
+
+function promotionPromptText(genie) {
+  return `Choisissez la promotion de ${genie.name} :\n\n1A — 1ère année\n2A — 2ème année\n3A — 3ème année`;
+}
+
 async function startReservation(date, court, hour) {
   let entered = prompt(geniePromptText());
   if (entered === null) return;
@@ -259,8 +282,17 @@ async function startReservation(date, court, hour) {
     return;
   }
 
+  const promoEntered = prompt(promotionPromptText(genie));
+  if (promoEntered === null) return;
+
+  const promotion = getPromotion(promoEntered);
+  if (!promotion) {
+    alert("Promotion invalide. Entrez 1A, 2A ou 3A.");
+    return;
+  }
+
   const representative = prompt(
-    `Nom du représentant de ${genie.name} pour ${COURT_LABELS[court]}, ${hour}h–${hour + 1}h :`
+    `Nom du représentant de ${genie.code} ${promotion.code} pour ${COURT_LABELS[court]}, ${hour}h–${hour + 1}h :`
   );
   if (!representative || !representative.trim()) return;
 
@@ -268,12 +300,12 @@ async function startReservation(date, court, hour) {
 
   try {
     statusEl.textContent = "Enregistrement…";
-    await reserve(date, court, hour, genie.code, cleanName);
+    await reserve(date, court, hour, genie.code, promotion.code, cleanName);
     alert("Réservation enregistrée.");
   } catch (err) {
     console.error(err);
-    if (String(err.message).includes("GENIE_ALREADY_BOOKED")) {
-      alert(`${genie.name} possède déjà une réservation pour cette date.`);
+    if (String(err.message).includes("PROMOTION_ALREADY_BOOKED")) {
+      alert(`${genie.code} ${promotion.code} possède déjà une réservation pour cette date.`);
     } else if (String(err.message).includes("SLOT_TAKEN")) {
       alert("Ce créneau vient d'être réservé par quelqu'un d'autre.");
     } else {
@@ -318,7 +350,9 @@ function render() {
         const genieLabel = genie ? `${genie.code} — ${genie.name}` : reservation.genie;
 
         const title = document.createElement("div");
-        title.textContent = genieLabel;
+        const promotion = PROMOTIONS.find(p => p.code === reservation.promotion);
+        const promotionLabel = promotion ? promotion.code : (reservation.promotion || "");
+        title.textContent = `${genieLabel} • ${promotionLabel}`;
 
         const rep = document.createElement("small");
         rep.textContent = `Représentant : ${reservation.representative}`;
