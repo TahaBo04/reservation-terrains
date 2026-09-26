@@ -12,6 +12,10 @@ service cloud.firestore {
       return g in ["GC", "GE", "GRT", "GI", "GINF", "GM", "GMIN", "MIS", "GPI"];
     }
 
+    function validPromotion(p) {
+      return p in ["1A", "2A", "3A"];
+    }
+
     function validReservation(docId) {
       let d = request.resource.data;
       let pairedLock = getAfter(/databases/$(database)/documents/reservations/$(d.lockKey));
@@ -23,14 +27,16 @@ service cloud.firestore {
         && d.hour >= 8
         && d.hour < 22
         && validGenie(d.genie)
+        && validPromotion(d.promotion)
         && d.representative is string
         && d.representative.size() >= 2
         && d.representative.size() <= 80
         && d.slotKey == docId
-        && d.lockKey == "lock__" + d.date + "__" + d.genie
+        && d.lockKey == "lock__" + d.date + "__" + d.genie + "__" + d.promotion
         && pairedLock.data.type == "lock"
         && pairedLock.data.date == d.date
         && pairedLock.data.genie == d.genie
+        && pairedLock.data.promotion == d.promotion
         && pairedLock.data.slotKey == docId
         && pairedLock.data.lockKey == d.lockKey;
     }
@@ -42,11 +48,13 @@ service cloud.firestore {
       return d.type == "lock"
         && d.date is string
         && validGenie(d.genie)
+        && validPromotion(d.promotion)
         && d.lockKey == docId
-        && d.lockKey == "lock__" + d.date + "__" + d.genie
+        && d.lockKey == "lock__" + d.date + "__" + d.genie + "__" + d.promotion
         && pairedReservation.data.type == "reservation"
         && pairedReservation.data.date == d.date
         && pairedReservation.data.genie == d.genie
+        && pairedReservation.data.promotion == d.promotion
         && pairedReservation.data.slotKey == d.slotKey
         && pairedReservation.data.lockKey == docId;
     }
