@@ -60,7 +60,7 @@ td.hour{color:var(--sub);font-weight:600;white-space:nowrap}
       <strong>Règle :</strong> chaque promotion de chaque génie peut réserver une seule fois par jour.
       Exemple : GPI 1A peut réserver sans bloquer GPI 2A ni GPI 3A.
       Chaque réservation affiche le génie, la promotion et le nom du représentant.
-      Les réservations sont partagées en temps réel entre tous les appareils.
+      Les réservations sont partagées entre tous les appareils et se synchronisent automatiquement.
     </div>
     <div id="status" class="status"></div>
   </div>
@@ -86,8 +86,8 @@ import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js
   Paste the Project URL and ANON/PUBLISHABLE key from Supabase here.
   Never put a service_role/secret key in this file.
 */
-const SUPABASE_URL = "YOUR_SUPABASE_URL";
-const SUPABASE_ANON_KEY = "YOUR_SUPABASE_ANON_KEY";
+const SUPABASE_URL = "https://swbsyxxahbchaqgpifop.supabase.co";
+const SUPABASE_ANON_KEY = "sb_publishable_Jzp6wS_EXZ-u54L45ID_KA_cq8sqqaR";
 
 const COURTS=["minifoot","basket","volley"];
 const COURT_LABELS={minifoot:"Mini-foot",basket:"Basketball",volley:"Volleyball"};
@@ -119,7 +119,6 @@ const configured =
 
 const supabase = configured ? createClient(SUPABASE_URL,SUPABASE_ANON_KEY) : null;
 let data={};
-let realtimeChannel=null;
 
 const dateInput=document.getElementById("datePick");
 const statusEl=document.getElementById("status");
@@ -173,17 +172,7 @@ async function loadReservations(){
   data={};
   for(const r of rows||[]) data[slotKey(r.court,r.hour)]=r;
   render();
-  setStatus("Synchronisé en temps réel");
-}
-
-function subscribeRealtime(){
-  if(!supabase)return;
-  if(realtimeChannel) supabase.removeChannel(realtimeChannel);
-
-  realtimeChannel=supabase
-    .channel("emi-reservations-live")
-    .on("postgres_changes",{event:"*",schema:"public",table:"reservations"},()=>loadReservations())
-    .subscribe();
+  setStatus("Synchronisé • actualisation automatique");
 }
 
 async function reserve(date,court,hour){
@@ -353,8 +342,12 @@ document.getElementById("today").onclick=()=>{
   loadReservations();
 };
 
-subscribeRealtime();
 loadReservations();
+setInterval(loadReservations, 3000);
+window.addEventListener("focus", loadReservations);
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) loadReservations();
+});
 </script>
 
 <!--
@@ -453,9 +446,8 @@ $$;
 revoke all on function public.delete_reservation(bigint,text) from public;
 grant execute on function public.delete_reservation(bigint,text) to anon, authenticated;
 
--- Enable realtime for the table. If it is already added, Supabase may say
--- it is already a member of the publication; that is harmless.
-alter publication supabase_realtime add table public.reservations;
+-- The page refreshes shared reservations automatically every 3 seconds.
+-- No Supabase Realtime publication setup is required.
 
 =====================================================================
 -->
