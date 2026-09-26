@@ -8,11 +8,11 @@
 :root{
   --bg:#f5f6f8;--card:#fff;--text:#1a1d23;--sub:#6b7280;--border:#e2e4e9;
   --free:#eef2ff;--free-hover:#e0e7ff;--taken:#dcfce7;--taken-text:#166534;
-  --danger:#dc2626;--accent:#2563eb;
+  --danger:#dc2626;--accent:#2563eb;--warn:#b45309;
 }
 @media(prefers-color-scheme:dark){
   :root{--bg:#14161a;--card:#1e2127;--text:#e5e7eb;--sub:#9ca3af;--border:#2c2f36;
-  --free:#1e2540;--free-hover:#28305a;--taken:#123023;--taken-text:#4ade80;--accent:#3b82f6}
+  --free:#1e2540;--free-hover:#28305a;--taken:#123023;--taken-text:#4ade80;--accent:#3b82f6;--warn:#f59e0b}
 }
 *{box-sizing:border-box}
 html,body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
@@ -30,7 +30,7 @@ table{border-collapse:collapse;width:100%;min-width:600px;background:var(--card)
 th,td{padding:6px;text-align:center;font-size:.78rem;border-bottom:1px solid var(--border)}
 th{background:var(--bg);color:var(--sub);font-weight:600}
 td.hour{color:var(--sub);font-weight:600;white-space:nowrap}
-.slot{min-height:58px;border-radius:9px;padding:8px 5px;display:flex;flex-direction:column;justify-content:center;gap:3px}
+.slot{min-height:60px;border-radius:9px;padding:8px 5px;display:flex;flex-direction:column;justify-content:center;gap:3px}
 .slot.free{background:var(--free);cursor:pointer}
 .slot.free:hover{background:var(--free-hover)}
 .slot.taken{background:var(--taken);color:var(--taken-text);font-weight:600}
@@ -39,7 +39,8 @@ td.hour{color:var(--sub);font-weight:600;white-space:nowrap}
 .legend{display:flex;gap:14px;font-size:.75rem;color:var(--sub);margin-top:10px}
 .dot{width:10px;height:10px;border-radius:3px;display:inline-block;margin-right:5px}
 .status{font-size:.78rem;color:var(--sub);margin-top:8px}
-.warning{font-size:.76rem;color:#b45309;margin-top:8px;line-height:1.4}
+.status.error{color:var(--danger)}
+.status.warn{color:var(--warn)}
 </style>
 </head>
 <body>
@@ -56,11 +57,11 @@ td.hour{color:var(--sub);font-weight:600;white-space:nowrap}
       <button id="nextDay">Lendemain →</button>
     </div>
     <div class="notice">
-      <strong>Règle :</strong> chaque promotion d'un génie peut réserver une seule fois par jour.
-      Exemple : GPI 1A n'empêche pas GPI 2A ou GPI 3A de réserver le même jour.
-      Chaque réservation contient le génie, la promotion et le nom du représentant.
+      <strong>Règle :</strong> chaque promotion de chaque génie peut réserver une seule fois par jour.
+      Exemple : GPI 1A peut réserver sans bloquer GPI 2A ni GPI 3A.
+      Chaque réservation affiche le génie, la promotion et le nom du représentant.
+      Les réservations sont partagées en temps réel entre tous les appareils.
     </div>
-    <div class="warning">Version HTML uniquement : les réservations sont enregistrées sur cet appareil.</div>
     <div id="status" class="status"></div>
   </div>
 
@@ -77,7 +78,17 @@ td.hour{color:var(--sub);font-weight:600;white-space:nowrap}
   </div>
 </div>
 
-<script>
+<script type="module">
+import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm";
+
+/*
+  PUBLIC VALUES ONLY.
+  Paste the Project URL and ANON/PUBLISHABLE key from Supabase here.
+  Never put a service_role/secret key in this file.
+*/
+const SUPABASE_URL = "YOUR_SUPABASE_URL";
+const SUPABASE_ANON_KEY = "YOUR_SUPABASE_ANON_KEY";
+
 const COURTS=["minifoot","basket","volley"];
 const COURT_LABELS={minifoot:"Mini-foot",basket:"Basketball",volley:"Volleyball"};
 const GENIES=[
@@ -97,34 +108,27 @@ const PROMOTIONS=[
   {code:"3A",name:"3ème année"}
 ];
 
-const START_HOUR=8, END_HOUR=22;
-const MIN_DATE="2026-09-01", MAX_DATE="2027-06-30";
-const STORAGE_KEY="emi_terrain_reservations_v1";
+const START_HOUR=8,END_HOUR=22;
+const MIN_DATE="2026-09-01",MAX_DATE="2027-06-30";
 
-// Mot de passe admin NON stocké en clair.
-// Avec un site 100% HTML, ceci reste une protection côté client et peut être contournée
-// par quelqu'un qui modifie le code dans son navigateur.
-const ADMIN_PASSWORD_SHA256="796fcce74729661dba2eab85fb6b43dabf178c8b1a5926b2da0bd0512e3e5e4f";
+const configured =
+  SUPABASE_URL.startsWith("https://") &&
+  !SUPABASE_URL.includes("YOUR_") &&
+  SUPABASE_ANON_KEY.length>20 &&
+  !SUPABASE_ANON_KEY.includes("YOUR_");
 
-let data=loadData();
+const supabase = configured ? createClient(SUPABASE_URL,SUPABASE_ANON_KEY) : null;
+let data={};
+let realtimeChannel=null;
+
 const dateInput=document.getElementById("datePick");
 const statusEl=document.getElementById("status");
 
-function loadData(){
-  try{return JSON.parse(localStorage.getItem(STORAGE_KEY)||"{}");}
-  catch{return {};}
+function setStatus(text,type=""){
+  statusEl.textContent=text;
+  statusEl.className="status"+(type?" "+type:"");
 }
-function saveData(){
-  localStorage.setItem(STORAGE_KEY,JSON.stringify(data));
-  statusEl.textContent="Enregistré sur cet appareil";
-}
-function slotKey(date,court,hour){return date+"__"+court+"__"+hour;}
-function bookingKey(date,genie,promotion){return date+"__"+genie+"__"+promotion;}
-
-function findExistingBooking(date,genie,promotion){
-  return Object.entries(data).find(([,r])=>r.date===date&&r.genie===genie&&r.promotion===promotion);
-}
-
+function slotKey(court,hour){return court+"__"+hour;}
 function getGenie(value){
   const code=String(value||"").trim().toUpperCase();
   return GENIES.find(g=>g.code===code);
@@ -143,20 +147,65 @@ function promotionPrompt(genie){
   return "Choisissez la promotion de "+genie.code+" :\n\n1A — 1ère année\n2A — 2ème année\n3A — 3ème année";
 }
 
-function reserve(date,court,hour){
-  const sKey=slotKey(date,court,hour);
-  if(data[sKey]){alert("Ce créneau est déjà réservé.");return;}
-
-  const genie=getGenie(prompt(geniePrompt()));
-  if(!genie){alert("Code de génie invalide.");return;}
-
-  const promotion=getPromotion(prompt(promotionPrompt(genie)));
-  if(!promotion){alert("Promotion invalide. Entrez 1A, 2A ou 3A.");return;}
-
-  if(findExistingBooking(date,genie.code,promotion.code)){
-    alert(genie.code+" "+promotion.code+" possède déjà une réservation pour cette date.");
+async function loadReservations(){
+  if(!supabase){
+    data={};
+    render();
+    setStatus("Supabase n'est pas encore configuré dans index.html.","warn");
     return;
   }
+
+  const date=dateInput.value;
+  setStatus("Synchronisation…");
+
+  const {data:rows,error}=await supabase
+    .from("reservations")
+    .select("id,date,court,hour,genie,promotion,representative,created_at")
+    .eq("date",date)
+    .order("hour",{ascending:true});
+
+  if(error){
+    console.error(error);
+    setStatus("Erreur de synchronisation Supabase.","error");
+    return;
+  }
+
+  data={};
+  for(const r of rows||[]) data[slotKey(r.court,r.hour)]=r;
+  render();
+  setStatus("Synchronisé en temps réel");
+}
+
+function subscribeRealtime(){
+  if(!supabase)return;
+  if(realtimeChannel) supabase.removeChannel(realtimeChannel);
+
+  realtimeChannel=supabase
+    .channel("emi-reservations-live")
+    .on("postgres_changes",{event:"*",schema:"public",table:"reservations"},()=>loadReservations())
+    .subscribe();
+}
+
+async function reserve(date,court,hour){
+  if(!supabase){
+    alert("Supabase n'est pas encore configuré.");
+    return;
+  }
+
+  if(data[slotKey(court,hour)]){
+    alert("Ce créneau est déjà réservé.");
+    return;
+  }
+
+  const enteredGenie=prompt(geniePrompt());
+  if(enteredGenie===null)return;
+  const genie=getGenie(enteredGenie);
+  if(!genie){alert("Code de génie invalide.");return;}
+
+  const enteredPromotion=prompt(promotionPrompt(genie));
+  if(enteredPromotion===null)return;
+  const promotion=getPromotion(enteredPromotion);
+  if(!promotion){alert("Promotion invalide. Entrez 1A, 2A ou 3A.");return;}
 
   const representative=prompt(
     "Nom du représentant de "+genie.code+" "+promotion.code+
@@ -164,39 +213,70 @@ function reserve(date,court,hour){
   );
   if(!representative||!representative.trim())return;
 
-  data[sKey]={
-    date,court,hour,
+  const cleanName=representative.trim().replace(/\s+/g," ").slice(0,80);
+  setStatus("Enregistrement…");
+
+  const {error}=await supabase.from("reservations").insert({
+    date,
+    court,
+    hour,
     genie:genie.code,
     promotion:promotion.code,
-    representative:representative.trim().replace(/\s+/g," ").slice(0,80),
-    bookingKey:bookingKey(date,genie.code,promotion.code),
-    createdAt:Date.now()
-  };
-  saveData();
-  render();
-}
+    representative:cleanName
+  });
 
-async function sha256(text){
-  const bytes=new TextEncoder().encode(text);
-  const digest=await crypto.subtle.digest("SHA-256",bytes);
-  return [...new Uint8Array(digest)].map(b=>b.toString(16).padStart(2,"0")).join("");
-}
+  if(error){
+    console.error(error);
 
-async function deleteReservation(sKey){
-  const password=prompt("Mot de passe administrateur :");
-  if(!password)return;
-
-  const hash=await sha256(password);
-  if(hash!==ADMIN_PASSWORD_SHA256){
-    alert("Mot de passe incorrect.");
+    if(error.code==="23505"){
+      if(String(error.message).includes("reservations_slot_unique")){
+        alert("Ce terrain est déjà réservé sur ce créneau.");
+      }else if(String(error.message).includes("reservations_promotion_daily_unique")){
+        alert(genie.code+" "+promotion.code+" possède déjà une réservation pour cette date.");
+      }else{
+        alert("Cette réservation entre en conflit avec une réservation existante.");
+      }
+    }else{
+      alert("Impossible d'enregistrer la réservation.");
+    }
+    await loadReservations();
     return;
   }
 
-  if(confirm("Supprimer cette réservation ?")){
-    delete data[sKey];
-    saveData();
-    render();
+  await loadReservations();
+}
+
+async function deleteReservation(id){
+  if(!supabase){
+    alert("Supabase n'est pas encore configuré.");
+    return;
   }
+
+  const password=prompt("Mot de passe administrateur :");
+  if(!password)return;
+  if(!confirm("Supprimer cette réservation ?"))return;
+
+  setStatus("Suppression…");
+
+  const {data:ok,error}=await supabase.rpc("delete_reservation",{
+    p_id:id,
+    p_password:password
+  });
+
+  if(error){
+    console.error(error);
+    alert("Suppression refusée.");
+    await loadReservations();
+    return;
+  }
+
+  if(ok!==true){
+    alert("Mot de passe administrateur incorrect.");
+    await loadReservations();
+    return;
+  }
+
+  await loadReservations();
 }
 
 function render(){
@@ -213,8 +293,7 @@ function render(){
 
     COURTS.forEach(court=>{
       const td=document.createElement("td");
-      const sKey=slotKey(date,court,h);
-      const r=data[sKey];
+      const r=data[slotKey(court,h)];
       const div=document.createElement("div");
       div.className="slot "+(r?"taken":"free");
 
@@ -229,7 +308,7 @@ function render(){
         const del=document.createElement("button");
         del.className="delete";
         del.textContent="Supprimer (admin)";
-        del.onclick=()=>deleteReservation(sKey);
+        del.onclick=()=>deleteReservation(r.id);
 
         div.append(title,rep,del);
       }else{
@@ -246,6 +325,7 @@ function render(){
       td.appendChild(div);
       tr.appendChild(td);
     });
+
     body.appendChild(tr);
   }
 }
@@ -258,13 +338,126 @@ function shiftDate(str,delta){
 
 const todayStr=new Date().toISOString().slice(0,10);
 dateInput.value=todayStr<MIN_DATE?MIN_DATE:(todayStr>MAX_DATE?MAX_DATE:todayStr);
-dateInput.onchange=render;
-document.getElementById("prevDay").onclick=()=>{dateInput.value=shiftDate(dateInput.value,-1);render();};
-document.getElementById("nextDay").onclick=()=>{dateInput.value=shiftDate(dateInput.value,1);render();};
-document.getElementById("today").onclick=()=>{dateInput.value=new Date().toISOString().slice(0,10);render();};
 
-statusEl.textContent="HTML uniquement • stockage local";
-render();
+dateInput.onchange=loadReservations;
+document.getElementById("prevDay").onclick=()=>{
+  dateInput.value=shiftDate(dateInput.value,-1);
+  loadReservations();
+};
+document.getElementById("nextDay").onclick=()=>{
+  dateInput.value=shiftDate(dateInput.value,1);
+  loadReservations();
+};
+document.getElementById("today").onclick=()=>{
+  dateInput.value=new Date().toISOString().slice(0,10);
+  loadReservations();
+};
+
+subscribeRealtime();
+loadReservations();
 </script>
+
+<!--
+=====================================================================
+SUPABASE DATABASE SETUP — KEEPING ALL RULES IN THIS ONE HTML FILE
+=====================================================================
+
+Run this SQL ONCE in the Supabase SQL editor for this project.
+
+The admin password itself is NOT stored here.
+Only its SHA-256 hash is used by the delete function.
+
+create extension if not exists pgcrypto;
+
+create table if not exists public.reservations (
+  id bigint generated by default as identity primary key,
+  date date not null,
+  court text not null check (court in ('minifoot','basket','volley')),
+  hour integer not null check (hour >= 8 and hour < 22),
+  genie text not null check (genie in ('GC','GE','GRT','GI','GINF','GM','GMIN','MIS','GPI')),
+  promotion text not null check (promotion in ('1A','2A','3A')),
+  representative text not null check (char_length(trim(representative)) between 2 and 80),
+  created_at timestamptz not null default now(),
+  constraint reservations_slot_unique unique (date,court,hour),
+  constraint reservations_promotion_daily_unique unique (date,genie,promotion)
+);
+
+alter table public.reservations enable row level security;
+
+drop policy if exists "public_read_reservations" on public.reservations;
+create policy "public_read_reservations"
+on public.reservations
+for select
+to anon, authenticated
+using (true);
+
+drop policy if exists "public_create_reservations" on public.reservations;
+create policy "public_create_reservations"
+on public.reservations
+for insert
+to anon, authenticated
+with check (
+  date between date '2026-09-01' and date '2027-06-30'
+  and court in ('minifoot','basket','volley')
+  and hour >= 8 and hour < 22
+  and genie in ('GC','GE','GRT','GI','GINF','GM','GMIN','MIS','GPI')
+  and promotion in ('1A','2A','3A')
+  and char_length(trim(representative)) between 2 and 80
+);
+
+-- No public UPDATE or DELETE policies are created.
+
+create table if not exists public.app_config (
+  key text primary key,
+  value text not null
+);
+
+alter table public.app_config enable row level security;
+
+-- SHA-256 hash of the current administrator deletion password.
+insert into public.app_config(key,value)
+values ('admin_password_sha256','796fcce74729661dba2eab85fb6b43dabf178c8b1a5926b2da0bd0512e3e5e4f')
+on conflict (key) do update set value=excluded.value;
+
+revoke all on public.app_config from anon, authenticated;
+
+create or replace function public.delete_reservation(
+  p_id bigint,
+  p_password text
+)
+returns boolean
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  expected_hash text;
+begin
+  select value into expected_hash
+  from public.app_config
+  where key='admin_password_sha256';
+
+  if expected_hash is null then
+    return false;
+  end if;
+
+  if encode(digest(coalesce(p_password,''),'sha256'),'hex') <> expected_hash then
+    return false;
+  end if;
+
+  delete from public.reservations where id=p_id;
+  return found;
+end;
+$$;
+
+revoke all on function public.delete_reservation(bigint,text) from public;
+grant execute on function public.delete_reservation(bigint,text) to anon, authenticated;
+
+-- Enable realtime for the table. If it is already added, Supabase may say
+-- it is already a member of the publication; that is harmless.
+alter publication supabase_realtime add table public.reservations;
+
+=====================================================================
+-->
 </body>
 </html>
