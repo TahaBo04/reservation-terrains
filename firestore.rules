@@ -1,0 +1,68 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isAdmin() {
+      return request.auth != null
+        && request.auth.token.email == "admin.reservation@emi.local";
+    }
+
+    function validGenie(g) {
+      return g in ["GC", "GE", "GRT", "GI", "GINF", "GM", "GMIN", "MIS", "GPI"];
+    }
+
+    function validReservation(docId) {
+      let d = request.resource.data;
+      let pairedLock = getAfter(/databases/$(database)/documents/reservations/$(d.lockKey));
+
+      return d.type == "reservation"
+        && d.date is string
+        && d.court in ["minifoot", "basket", "volley"]
+        && d.hour is int
+        && d.hour >= 8
+        && d.hour < 22
+        && validGenie(d.genie)
+        && d.representative is string
+        && d.representative.size() >= 2
+        && d.representative.size() <= 80
+        && d.slotKey == docId
+        && d.lockKey == "lock__" + d.date + "__" + d.genie
+        && pairedLock.data.type == "lock"
+        && pairedLock.data.date == d.date
+        && pairedLock.data.genie == d.genie
+        && pairedLock.data.slotKey == docId
+        && pairedLock.data.lockKey == d.lockKey;
+    }
+
+    function validLock(docId) {
+      let d = request.resource.data;
+      let pairedReservation = getAfter(/databases/$(database)/documents/reservations/$(d.slotKey));
+
+      return d.type == "lock"
+        && d.date is string
+        && validGenie(d.genie)
+        && d.lockKey == docId
+        && d.lockKey == "lock__" + d.date + "__" + d.genie
+        && pairedReservation.data.type == "reservation"
+        && pairedReservation.data.date == d.date
+        && pairedReservation.data.genie == d.genie
+        && pairedReservation.data.slotKey == d.slotKey
+        && pairedReservation.data.lockKey == docId;
+    }
+
+    match /reservations/{docId} {
+      allow read: if true;
+
+      // Students may only CREATE new reservations/locks.
+      // Existing reservations cannot be overwritten.
+      allow create: if validReservation(docId) || validLock(docId);
+
+      // Nobody can edit a reservation after creation.
+      allow update: if false;
+
+      // Only the Firebase admin account can delete.
+      allow delete: if isAdmin();
+    }
+  }
+}
