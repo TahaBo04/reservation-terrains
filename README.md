@@ -6,8 +6,10 @@ Version simple du système de réservation : le site reste un seul fichier `inde
 
 - 3 terrains : Mini-foot, Basketball, Volleyball.
 - Créneaux de 8h à 22h.
-- 1 seule réservation par génie et par jour, quel que soit le terrain.
-- Chaque réservation contient le génie et le nom du représentant.
+- 1 seule réservation par **promotion de génie** et par jour, quel que soit le terrain.
+- Chaque génie dispose de 3 promotions indépendantes : 1A, 2A et 3A.
+- Exemple : une réservation de GPI 1A ne bloque ni GPI 2A ni GPI 3A.
+- Chaque réservation contient le génie, la promotion et le nom du représentant.
 - Une réservation ne peut pas être modifiée ou supprimée par un étudiant.
 - La suppression nécessite le mot de passe administrateur Firebase.
 - Les réservations sont synchronisées en temps réel avec Firestore.
